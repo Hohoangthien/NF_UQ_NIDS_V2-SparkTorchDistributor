@@ -1,0 +1,140 @@
+#!/bin/bash
+
+# GRU Model Training Script with Optimized Spark Configuration
+# Usage: ./run_training.sh
+
+# Set default values
+MODE=${MODE:-"cluster"}
+NUM_PROCESSES=${NUM_PROCESSES:-10}
+EPOCHS=${EPOCHS:-200}
+BATCH_SIZE=${BATCH_SIZE:-32}
+LEARNING_RATE=${LEARNING_RATE:-0.002}
+HIDDEN_SIZE=${HIDDEN_SIZE:-64}
+DROPOUT=${DROPOUT:-0.2}
+
+# Data paths - Update these according to your setup
+TRAIN_PATH=${TRAIN_PATH:-"hdfs://master:9000/usr/ubuntu/data/classweights-43-21/train_df.parquet"}
+TEST_PATH=${TEST_PATH:-"hdfs://master:9000/usr/ubuntu/data/classweights-43-21/test_df.parquet"}
+LABEL_INDEXER_PATH=${LABEL_INDEXER_PATH:-"hdfs://master:9000/usr/ubuntu/data/classweights-43-21/data/label_indexer/label_indexer"}
+OUTPUT_DIR=${OUTPUT_DIR:-"hdfs://master:9000/usr/ubuntu/results-ultra"}
+
+# Python environment
+PYTHON_ENV=${PYTHON_ENV:-"/home/ubuntu/spark_env/bin/python"}
+
+# Spark configuration - Optimized for distributed training
+SPARK_SUBMIT_ARGS=(
+    --master yarn
+    --deploy-mode cluster
+    --name "GRU_NIDS_Training_$(date +%Y%m%d_%H%M%S)"
+    
+    # Executor configuration
+    --num-executors $NUM_PROCESSES
+    --executor-memory 4G
+    --executor-cores 3
+    --driver-memory 3G
+    --conf spark.executor.memoryOverhead=2G
+    --conf spark.driver.memoryOverhead=2G
+    
+    # Task configuration
+    --conf spark.task.cpus=1
+    --conf spark.task.maxFailures=3
+    
+    # Python environment
+    --conf spark.pyspark.python=$PYTHON_ENV
+    --conf spark.pyspark.driver.python=$PYTHON_ENV
+    --conf spark.executorEnv.PYSPARK_PYTHON=$PYTHON_ENV
+    --conf spark.yarn.appMasterEnv.PYSPARK_PYTHON=$PYTHON_ENV
+    
+    # Environment variables
+    --conf spark.yarn.appMasterEnv.GLOO_LOG_LEVEL=INFO
+    --conf spark.executorEnv.GLOO_LOG_LEVEL=INFO
+    --conf spark.executorEnv.TORCH_DISTRIBUTED_DEBUG=INFO
+    --conf spark.executorEnv.MPLCONFIGDIR=/tmp/matplotlib_cache
+    --conf spark.executorEnv.OMP_NUM_THREADS=3
+    
+    # Hadoop configuration
+    --conf spark.yarn.appMasterEnv.HADOOP_HOME=/usr/local/hadoop
+    --conf spark.yarn.appMasterEnv.HADOOP_CONF_DIR=/usr/local/hadoop/etc/hadoop
+    --conf spark.yarn.appMasterEnv.JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+    --conf spark.executorEnv.HADOOP_HOME=/usr/local/hadoop
+    --conf spark.executorEnv.HADOOP_CONF_DIR=/usr/local/hadoop/etc/hadoop
+    --conf spark.executorEnv.JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+    
+    # Spark configuration
+    --conf spark.executorEnv.SPARK_HOME=/usr/local/spark
+    --conf spark.yarn.appMasterEnv.SPARK_HOME=/usr/local/spark
+    
+    # Performance optimization
+    --conf spark.python.worker.reuse=true
+    --conf spark.shuffle.service.enabled=true
+    --conf spark.yarn.jars=hdfs://master:9000/user/spark/jars/*
+    --conf spark.dynamicAllocation.enabled=false
+    --conf spark.sql.adaptive.enabled=true
+    --conf spark.sql.adaptive.coalescePartitions.enabled=true
+    --conf spark.scheduler.mode=FIFO
+    
+    # Timeout configuration
+    --conf spark.scheduler.barrier.sync.timeout=600s
+    --conf spark.network.timeout=800s
+    --conf spark.executor.heartbeatInterval=15s
+    --conf spark.rpc.askTimeout=400s
+    
+    # YARN configuration
+    --conf spark.yarn.maxAppAttempts=1
+    --conf spark.yarn.submit.waitAppCompletion=true
+    
+    # Serialization
+    --conf spark.serializer=org.apache.spark.serializer.KryoSerializer
+    --conf spark.kryo.unsafe=true
+    
+    # Failure handling
+    --conf spark.excludeOnFailure.enabled=false
+    
+    # Partition configuration
+    --conf spark.sql.shuffle.partitions=30
+    --conf spark.default.parallelism=30
+)
+
+# Application arguments
+APP_ARGS=(
+    --mode $MODE
+    --num_processes $NUM_PROCESSES
+    --train_path "$TRAIN_PATH"
+    --test_path "$TEST_PATH"
+    --label_indexer_path "$LABEL_INDEXER_PATH"
+    --output_dir "$OUTPUT_DIR-$(date +%Y%m%d_%H%M%S)"
+    --batch_size $BATCH_SIZE
+    --epochs $EPOCHS
+    --learning_rate $LEARNING_RATE
+    --hidden_size $HIDDEN_SIZE
+    --dropout $DROPOUT
+)
+
+# Print configuration
+echo "=========================================="
+echo "GRU Model Training Configuration"
+echo "=========================================="
+echo "Mode: $MODE"
+echo "Processes: $NUM_PROCESSES"
+echo "Epochs: $EPOCHS"
+echo "Batch Size: $BATCH_SIZE"
+echo "Learning Rate: $LEARNING_RATE"
+echo "Hidden Size: $HIDDEN_SIZE"
+echo "Dropout: $DROPOUT"
+echo "Train Path: $TRAIN_PATH"
+echo "Test Path: $TEST_PATH"
+echo "Output Dir: $OUTPUT_DIR-$(date +%Y%m%d_%H%M%S)"
+echo "Python Env: $PYTHON_ENV"
+echo "=========================================="
+
+# Run the training
+echo "Starting training..."
+spark-submit "${SPARK_SUBMIT_ARGS[@]}" main.py "${APP_ARGS[@]}"
+
+# Check exit status
+if [ $? -eq 0 ]; then
+    echo "✅ Training completed successfully!"
+else
+    echo "❌ Training failed!"
+    exit 1
+fi
